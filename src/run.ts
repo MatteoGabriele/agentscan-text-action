@@ -2,18 +2,20 @@ import { readFileSync } from "node:fs";
 import { type AnalyzeTextResult, analyzeText } from "@unveil/interlinked";
 import {
 	appendAnalysisBlock,
+	hasAnalysisBlock,
 	stripAnalysisBlock,
 	wrapAnalysisComment,
 } from "./analysis/marker";
 import { renderAnalysis } from "./analysis/render";
 import {
 	type Config,
+	isFlaggedClassification,
 	readConfig,
 	shouldPublishAnalysis,
 	shouldSyncLabel,
 } from "./config";
 import { upsertAnalysisComment } from "./github/comments";
-import { addAgentLabel } from "./github/labels";
+import { addLabel } from "./github/labels";
 import { closePullRequest, updatePullRequestBody } from "./github/pull-request";
 import { fetchPullRequestTemplate } from "./github/template";
 import type { PullRequest, PullRequestEvent } from "./types";
@@ -62,8 +64,8 @@ async function fetchTemplateSafely(repo: string, ref: string) {
 }
 
 function publishOutputs(result: AnalyzeTextResult) {
-	setOutput("verdict", result.verdict);
-	setOutput("probability", String(result.probability));
+	setOutput("classification", result.classification);
+	setOutput("score", String(result.score));
 	setOutput("confidence", String(result.confidence));
 	setOutput("signals", JSON.stringify(result.signals));
 }
@@ -72,19 +74,29 @@ function warnOnError(error: Error) {
 	logWarning(error.message);
 }
 
+/**
+ * With `createIfMissing` off, only a previous run's analysis is brought up to
+ * date, so an edit that clears a flag doesn't leave the old verdict behind.
+ */
 async function publishAnalysis(
 	pull: PullRequest,
 	repo: string,
 	description: string,
 	analysis: string,
 	config: Config,
+	createIfMissing: boolean,
 ) {
 	if (config.analysisLocation === "comment") {
 		await upsertAnalysisComment(
 			repo,
 			pull.number,
 			wrapAnalysisComment(analysis),
+			{ createIfMissing },
 		);
+		return;
+	}
+
+	if (!createIfMissing && !hasAnalysisBlock(pull.body ?? "")) {
 		return;
 	}
 
@@ -115,38 +127,48 @@ export async function run() {
 	const template = await fetchTemplateSafely(repo, pull.base.sha);
 	const description = stripAnalysisBlock(pull.body ?? "");
 	const result = analyzeText(description, { template });
-	const isAgentWritten = result.verdict === "ai";
+	const { classification } = result;
+	const isFlagged = isFlaggedClassification(classification);
 
-	console.log(
-		`#${pull.number}: ${result.verdict} (probability ${result.probability})`,
-	);
+	console.log(`#${pull.number}: ${classification} (score ${result.score})`);
 
 	publishOutputs(result);
 
-	const analysis = renderAnalysis(
-		result,
-		isAgentWritten ? config.agentMessage : config.humanMessage,
-	);
+	const analysis = renderAnalysis(result, config.messages[classification]);
 	appendJobSummary(analysis);
 
 	if (shouldPublishAnalysis(config.mode)) {
-		await publishAnalysis(pull, repo, description, analysis, config).catch(
+		// Organic and insufficient-data PRs get no new comment unless asked, as in agentscan.
+		const createIfMissing = isFlagged || config.shouldCommentOnOrganic;
+		await publishAnalysis(
+			pull,
+			repo,
+			description,
+			analysis,
+			config,
+			createIfMissing,
+		).catch(warnOnError);
+	}
+
+	if (!isFlagged) {
+		return;
+	}
+
+	if (shouldSyncLabel(config.mode)) {
+		await addLabel(repo, pull.number, config.labels[classification]).catch(
 			warnOnError,
 		);
 	}
 
-	if (isAgentWritten && shouldSyncLabel(config.mode)) {
-		await addAgentLabel(repo, pull.number, config.agentLabel).catch(
-			warnOnError,
-		);
-	}
-
-	if (isAgentWritten && config.shouldAutoClose) {
+	if (
+		config.shouldAutoClose &&
+		config.autoCloseClassifications.includes(classification)
+	) {
 		await closePullRequest(repo, pull.number).catch(warnOnError);
 	}
 
-	if (isAgentWritten && config.shouldFailOnAgent) {
-		logError("The PR description reads as agent-written.");
+	if (config.failOnClassifications.includes(classification)) {
+		logError(`The PR description is classified as ${classification}.`);
 		process.exitCode = 1;
 	}
 }

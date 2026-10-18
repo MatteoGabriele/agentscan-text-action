@@ -1,5 +1,5 @@
 {
-	"name": "interlinked-action",
+	"name": "agentscan-text-action",
 	"type": "module",
 	"version": "0.0.0",
 	"private": true,
@@ -12,10 +12,12 @@
 		"typecheck": "tsc --noEmit",
 		"check": "biome check --write",
 		"release": "bumpp",
-		"test": "vitest"
+		"test": "vitest",
+		"collect:adopters": "node --env-file-if-exists=.env scripts/collect-adopters.ts",
+		"collect:adopters:dry-run": "node --env-file-if-exists=.env scripts/collect-adopters.ts --dry-run"
 	},
 	"dependencies": {
-		"@unveil/interlinked": "^0.0.4"
+		"@unveil/interlinked": "link:../interlinked/packages/interlinked"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.15",

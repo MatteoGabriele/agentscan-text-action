@@ -1,4 +1,4 @@
-name: interlinked-action
+name: agentscan-text-action
 description: Flags pull request descriptions that look agent-written
 author: Matteo Gabriele
 branding:
@@ -7,7 +7,7 @@ branding:
 
 inputs:
   github-token:
-    description: "Token used to read the repo's PR template, update the PR description and manage the label. Needs `pull-requests: write`."
+    description: "Token used to read the repo's PR template, update the PR description and manage labels. Needs `pull-requests: write`."
     required: false
     default: ${{ github.token }}
   allowed-users:
@@ -19,41 +19,57 @@ inputs:
     required: false
     default: "member,owner"
   mode:
-    description: "How interlinked should act on its findings: 'full' (description and labels), 'labels' (labels only), 'description' (description only), or 'silent' (outputs and job summary only)."
+    description: "How the action should act on its findings: 'full' (description and labels), 'labels' (labels only), 'description' (description only), or 'silent' (outputs and job summary only)."
     required: false
     default: "labels"
   analysis-location:
     description: "Where to publish the analysis when the mode writes it: 'comment' (a separate PR comment, edited in place on reruns) or 'description' (appended to the PR description). The PR author can edit a description block, so it can be altered or removed; use 'comment' when that matters."
     required: false
     default: "comment"
-  label-ai:
-    description: "Label to add when the description reads as agent-written. Never removed automatically; a maintainer clears it."
+  comment-on-organic:
+    description: "Whether to publish the analysis when the description is classified as organic or has too little text to classify. A previous run's analysis is always brought up to date."
     required: false
-    default: "agent-written"
+    default: "false"
+  label-mixed:
+    description: "Label to add when the description has mixed signals. Never removed automatically; a maintainer clears it."
+    required: false
+    default: "agentscan:mixed-text"
+  label-automation:
+    description: "Label to add when the description is classified as automation. Never removed automatically; a maintainer clears it."
+    required: false
+    default: "agentscan:automated-text"
   auto-close:
-    description: "Whether to automatically close PRs whose description reads as agent-written."
+    description: "Whether to automatically close PRs whose description is classified as one of `auto-close-classifications`."
     required: false
     default: "false"
-  message-ai:
-    description: "Custom message to add to the analysis when the description reads as agent-written."
+  auto-close-classifications:
+    description: "Classifications that trigger auto-close (mixed, automation). Can use array syntax in workflow YAML."
+    required: false
+    default: "automation"
+  fail-on-classifications:
+    description: "Classifications that fail the step (mixed, automation). Can use array syntax in workflow YAML. Empty by default, so the step never fails."
     required: false
     default: ""
-  message-human:
-    description: "Custom message to add to the analysis when the description reads as human-written."
+  message-organic:
+    description: "Custom message to show when the description is classified as organic. Replaces the default one."
     required: false
     default: ""
-  fail-on-ai:
-    description: "Fail the step when the description reads as agent-written."
+  message-mixed:
+    description: "Custom message to show when the description has mixed signals. Replaces the default one."
     required: false
-    default: "false"
+    default: ""
+  message-automation:
+    description: "Custom message to show when the description is classified as automation. Replaces the default one."
+    required: false
+    default: ""
 
 outputs:
-  verdict:
-    description: "`ai` or `human`."
-  probability:
-    description: Agent-style score, 0 to 1.
+  classification:
+    description: "`organic`, `mixed`, `automation`, or `insufficient-data`."
+  score:
+    description: "How human the description reads, 0 to 100 with 100 human, on the same scale as agentscan's account score. `-1` with insufficient data."
   confidence:
-    description: Confidence in the verdict, 0.5 to 1.
+    description: Confidence in the classification, 0.5 to 1.
   signals:
     description: The signals that fired, as JSON.
 

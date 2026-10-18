@@ -1,6 +1,6 @@
 import { githubRequest, warnOnFailedResponse } from "../utils/github-api";
 
-export async function addAgentLabel(
+export async function addLabel(
 	repo: string,
 	pullNumber: number,
 	label: string,

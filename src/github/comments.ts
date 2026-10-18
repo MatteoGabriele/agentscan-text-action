@@ -25,13 +25,21 @@ async function findAnalysisComment(repo: string, pullNumber: number) {
 	});
 }
 
-/** Edits the previous run's comment in place instead of posting a new one each run. */
+/**
+ * Edits the previous run's comment in place instead of posting a new one each
+ * run. With `createIfMissing` off, it only ever edits.
+ */
 export async function upsertAnalysisComment(
 	repo: string,
 	pullNumber: number,
 	body: string,
+	{ createIfMissing = true } = {},
 ) {
 	const existing = await findAnalysisComment(repo, pullNumber);
+
+	if (!existing && !createIfMissing) {
+		return;
+	}
 
 	let response: Response | undefined;
 

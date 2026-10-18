@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { analyzeText } from "@unveil/interlinked";
+import { analyzeText, type TextClassification } from "@unveil/interlinked";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { run } from "./run";
 
@@ -17,7 +17,7 @@ interface Request {
 }
 
 interface Setup {
-	verdict?: "ai" | "human";
+	classification?: TextClassification;
 	body?: string;
 	author?: string;
 	association?: string;
@@ -43,8 +43,15 @@ afterEach(() => {
 	process.exitCode = undefined;
 });
 
+const SCORES: Record<TextClassification, number> = {
+	organic: 90,
+	mixed: 60,
+	automation: 20,
+	"insufficient-data": -1,
+};
+
 async function runAction({
-	verdict = "human",
+	classification = "organic",
 	body = "Fixes the thing.",
 	author = "someone",
 	association = "CONTRIBUTOR",
@@ -53,8 +60,9 @@ async function runAction({
 	comments = [],
 }: Setup = {}) {
 	vi.mocked(analyzeText).mockReturnValue({
-		verdict,
-		probability: verdict === "ai" ? 0.9 : 0.1,
+		verdict: classification === "automation" ? "ai" : "human",
+		classification,
+		score: SCORES[classification],
 		confidence: 0.8,
 		signals: [],
 	});
@@ -121,11 +129,11 @@ function outputs() {
 }
 
 describe("analysis", () => {
-	it("writes the verdict and score to the step outputs", async () => {
-		await runAction({ verdict: "ai" });
+	it("writes the classification and score to the step outputs", async () => {
+		await runAction({ classification: "automation" });
 
-		expect(outputs()).toMatch(/verdict<<\S+\nai\n/);
-		expect(outputs()).toMatch(/probability<<\S+\n0.9\n/);
+		expect(outputs()).toMatch(/classification<<\S+\nautomation\n/);
+		expect(outputs()).toMatch(/score<<\S+\n20\n/);
 	});
 
 	it("passes the repo's PR template to the detector", async () => {
@@ -155,7 +163,7 @@ describe("analysis", () => {
 describe("full mode", () => {
 	it("appends the analysis to the PR description", async () => {
 		await runAction({
-			verdict: "ai",
+			classification: "automation",
 			body: "Fixes the thing.",
 			inputs: { mode: "full", "analysis-location": "description" },
 		});
@@ -163,33 +171,133 @@ describe("full mode", () => {
 		expect(newBody()).toMatch(
 			/^Fixes the thing\.\n\n<!-- interlinked:start -->/,
 		);
-		expect(newBody()).toContain("Reads like an agent wrote it");
+		expect(newBody()).toContain("Agent-style writing");
 	});
 
-	it("adds the label when the verdict is ai", async () => {
+	it.each([
+		["automation", "label-automation", "agentscan:automated-text"],
+		["mixed", "label-mixed", "agentscan:mixed-text"],
+	] as const)(
+		"adds the %s label",
+		async (classification, input, defaultLabel) => {
+			await runAction({ classification, inputs: { mode: "full" } });
+
+			expect(requests).toContainEqual({
+				method: "POST",
+				path: `/repos/${REPO}/issues/${PR}/labels`,
+				body: { labels: [defaultLabel] },
+			});
+
+			requests = [];
+			await runAction({
+				classification,
+				inputs: { mode: "full", [input]: "bot" },
+			});
+
+			expect(requests).toContainEqual({
+				method: "POST",
+				path: `/repos/${REPO}/issues/${PR}/labels`,
+				body: { labels: ["bot"] },
+			});
+		},
+	);
+
+	it.each(["organic", "insufficient-data"] as const)(
+		"leaves labels alone when the description is %s",
+		async (classification) => {
+			await runAction({ classification, inputs: { mode: "full" } });
+
+			expect(requests).not.toContainEqual(
+				expect.objectContaining({
+					path: expect.stringContaining(`/issues/${PR}/labels`),
+				}),
+			);
+		},
+	);
+
+	it("replaces the default description with a custom message", async () => {
 		await runAction({
-			verdict: "ai",
-			inputs: { mode: "full", "label-ai": "bot" },
+			classification: "mixed",
+			inputs: {
+				mode: "full",
+				"analysis-location": "description",
+				"message-mixed": "Please rewrite this yourself.",
+			},
 		});
 
-		expect(requests).toContainEqual({
-			method: "POST",
-			path: `/repos/${REPO}/issues/${PR}/labels`,
-			body: { labels: ["bot"] },
-		});
+		expect(newBody()).toContain("Please rewrite this yourself.");
+		expect(newBody()).not.toContain("partly like an agent");
+	});
+});
+
+describe("organic descriptions", () => {
+	const inputs = { mode: "description" };
+
+	it("aren't commented on by default", async () => {
+		await runAction({ classification: "organic", inputs });
+
+		expect(requests).toEqual([]);
 	});
 
-	it("leaves the label alone when the verdict is human", async () => {
+	it("are commented on with comment-on-organic", async () => {
 		await runAction({
-			verdict: "human",
-			inputs: { mode: "full", "label-ai": "bot" },
+			classification: "organic",
+			inputs: { ...inputs, "comment-on-organic": "true" },
 		});
 
-		expect(requests).not.toContainEqual(
-			expect.objectContaining({
-				path: expect.stringContaining(`/issues/${PR}/labels`),
-			}),
-		);
+		expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual([
+			`POST /repos/${REPO}/issues/${PR}/comments`,
+		]);
+	});
+
+	it("still update an earlier analysis comment", async () => {
+		await runAction({
+			classification: "organic",
+			inputs,
+			comments: [
+				{
+					id: 2,
+					body: "<!-- interlinked:start -->\nold\n<!-- interlinked:end -->",
+					user: { type: "Bot" },
+				},
+			],
+		});
+
+		expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual([
+			`PATCH /repos/${REPO}/issues/comments/2`,
+		]);
+	});
+
+	it("still update an earlier analysis block in the description", async () => {
+		await runAction({
+			classification: "organic",
+			body: "Fixes the thing.\n\n<!-- interlinked:start -->\nold\n<!-- interlinked:end -->\n",
+			inputs: { ...inputs, "analysis-location": "description" },
+		});
+
+		expect(newBody()).toContain("Organic writing");
+	});
+
+	it("leave a description without an analysis block alone", async () => {
+		await runAction({
+			classification: "insufficient-data",
+			inputs: { ...inputs, "analysis-location": "description" },
+		});
+
+		expect(requests).toEqual([]);
+	});
+});
+
+describe("insufficient data", () => {
+	it("says so instead of showing a score", async () => {
+		await runAction({
+			classification: "insufficient-data",
+			inputs: { mode: "description", "comment-on-organic": "true" },
+		});
+
+		const comment = requests[0]?.body as { body: string };
+		expect(comment.body).toContain("Insufficient data");
+		expect(comment.body).not.toContain("/100");
 	});
 });
 
@@ -197,7 +305,7 @@ describe("comment location", () => {
 	const inputs = { mode: "description" };
 
 	it("posts the analysis as a comment by default", async () => {
-		await runAction({ verdict: "ai", inputs });
+		await runAction({ classification: "automation", inputs });
 
 		expect(newBody()).toBeUndefined();
 		expect(requests).toContainEqual({
@@ -205,7 +313,7 @@ describe("comment location", () => {
 			path: `/repos/${REPO}/issues/${PR}/comments`,
 			body: {
 				body: expect.stringMatching(
-					/^<!-- interlinked:start -->\n[\s\S]*Reads like an agent wrote it/,
+					/^<!-- interlinked:start -->\n[\s\S]*Agent-style writing/,
 				),
 			},
 		});
@@ -231,6 +339,7 @@ describe("comment location", () => {
 
 	it("ignores marker comments written by people", async () => {
 		await runAction({
+			classification: "automation",
 			inputs,
 			comments: [
 				{
@@ -249,19 +358,25 @@ describe("comment location", () => {
 
 describe("modes", () => {
 	it("only touches labels by default", async () => {
-		await runAction({ verdict: "ai" });
+		await runAction({ classification: "automation" });
 
 		expect(requests.map((r) => r.method)).toEqual(["POST"]);
 	});
 
 	it("only touches labels in labels mode", async () => {
-		await runAction({ verdict: "ai", inputs: { mode: "labels" } });
+		await runAction({
+			classification: "automation",
+			inputs: { mode: "labels" },
+		});
 
 		expect(requests.map((r) => r.method)).toEqual(["POST"]);
 	});
 
 	it("only publishes the analysis in description mode", async () => {
-		await runAction({ verdict: "ai", inputs: { mode: "description" } });
+		await runAction({
+			classification: "automation",
+			inputs: { mode: "description" },
+		});
 
 		expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual([
 			`POST /repos/${REPO}/issues/${PR}/comments`,
@@ -269,7 +384,10 @@ describe("modes", () => {
 	});
 
 	it("writes nothing back to the PR in silent mode", async () => {
-		await runAction({ verdict: "ai", inputs: { mode: "silent" } });
+		await runAction({
+			classification: "automation",
+			inputs: { mode: "silent" },
+		});
 
 		expect(requests).toEqual([]);
 	});
@@ -314,8 +432,11 @@ describe("skipping", () => {
 });
 
 describe("enforcement", () => {
-	it("closes the PR when auto-close is on and the verdict is ai", async () => {
-		await runAction({ verdict: "ai", inputs: { "auto-close": "true" } });
+	it("closes the PR when auto-close is on and it's classified as automation", async () => {
+		await runAction({
+			classification: "automation",
+			inputs: { "auto-close": "true" },
+		});
 
 		expect(requests).toContainEqual({
 			method: "PATCH",
@@ -324,16 +445,52 @@ describe("enforcement", () => {
 		});
 	});
 
-	it("fails the step when fail-on-ai is on and the verdict is ai", async () => {
-		await runAction({ verdict: "ai", inputs: { "fail-on-ai": "true" } });
+	it("leaves mixed PRs open unless auto-close-classifications includes mixed", async () => {
+		await runAction({
+			classification: "mixed",
+			inputs: { "auto-close": "true" },
+		});
+
+		expect(requests).not.toContainEqual(
+			expect.objectContaining({ body: { state: "closed" } }),
+		);
+
+		await runAction({
+			classification: "mixed",
+			inputs: {
+				"auto-close": "true",
+				"auto-close-classifications": "mixed, automation",
+			},
+		});
+
+		expect(requests).toContainEqual(
+			expect.objectContaining({ body: { state: "closed" } }),
+		);
+	});
+
+	it("fails the step for the classifications in fail-on-classifications", async () => {
+		await runAction({
+			classification: "automation",
+			inputs: { "fail-on-classifications": '["automation"]' },
+		});
 
 		expect(process.exitCode).toBe(1);
 	});
 
-	it("leaves human PRs open and passing", async () => {
+	it("passes by default, whatever the classification", async () => {
+		await runAction({ classification: "automation" });
+
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("leaves organic PRs open and passing", async () => {
 		await runAction({
-			verdict: "human",
-			inputs: { "auto-close": "true", "fail-on-ai": "true" },
+			classification: "organic",
+			inputs: {
+				"auto-close": "true",
+				"auto-close-classifications": "mixed,automation",
+				"fail-on-classifications": "mixed,automation",
+			},
 		});
 
 		expect(requests).not.toContainEqual(

@@ -10,6 +10,10 @@ export function stripAnalysisBlock(body: string) {
 	return body.replace(ANALYSIS_BLOCK_PATTERN, "\n").trimEnd();
 }
 
+export function hasAnalysisBlock(body: string) {
+	return body.includes(START_MARKER);
+}
+
 export function appendAnalysisBlock(description: string, analysis: string) {
 	return `${description}\n\n${START_MARKER}\n---\n\n${analysis}\n${END_MARKER}\n`;
 }
