@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@unveil/interlinked':
-        specifier: link:../interlinked/packages/interlinked
-        version: link:../interlinked/packages/interlinked
+        specifier: ^0.0.6
+        version: 0.0.6
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.5.15
@@ -336,6 +336,9 @@ packages:
     engines: {node: '>=16.20.0'}
     cpu: [x64]
     os: [win32]
+
+  '@unveil/interlinked@0.0.6':
+    resolution: {integrity: sha512-IL5WlE4S/k54u4jT5lXu44k0odrUbXdGcWQ0DFO3NgCoW5dEF3MbQZPyi4yX6zfcJ1vp95CZDa9AsK8fA2H63g==}
 
   '@vitest/mocker@5.0.3':
     resolution: {integrity: sha512-T8sWAIbkSyAjkwTcaEc3Iu0o9A27X1/kdXrizhZkGuSKScRQtRzclfAMpOTcGdXCsqxeWlpGy3XjqaW8CpLORg==}
@@ -1078,6 +1081,8 @@ snapshots:
 
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
+
+  '@unveil/interlinked@0.0.6': {}
 
   '@vitest/mocker@5.0.3(vite@8.3.2(@types/node@26.6.4)(jiti@2.7.0)(yaml@2.9.1))':
     dependencies:

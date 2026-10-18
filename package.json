@@ -17,7 +17,7 @@
 		"collect:adopters:dry-run": "node --env-file-if-exists=.env scripts/collect-adopters.ts --dry-run"
 	},
 	"dependencies": {
-		"@unveil/interlinked": "link:../interlinked/packages/interlinked"
+		"@unveil/interlinked": "^0.0.6"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.15",

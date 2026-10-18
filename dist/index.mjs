@@ -1,5 +1,5 @@
 import { appendFileSync, readFileSync } from "node:fs";
-//#region ../interlinked/packages/interlinked/dist/index.mjs
+//#region node_modules/.pnpm/@unveil+interlinked@0.0.6/node_modules/@unveil/interlinked/dist/index.mjs
 function trace(text) {
 	return {
 		text,
