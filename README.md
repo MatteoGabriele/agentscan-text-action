@@ -30,7 +30,7 @@ jobs:
   analyze:
     runs-on: ubuntu-latest
     steps:
-      - uses: MatteoGabriele/agentscan-text-action@v0
+      - uses: MatteoGabriele/agentscan-text-action@v0.4
 ```
 
 Use `pull_request_target` so the token can write to PRs from forks. The action never checks out or runs PR code, so that's safe here. Edits made with the default `GITHUB_TOKEN` don't trigger new workflow runs, so updating the description or comment doesn't loop.
